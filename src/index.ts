@@ -1,9 +1,10 @@
-import { ApolloServer, ApolloServerPlugin } from '@apollo/server';
+import { ApolloServer, ApolloServerPlugin, BaseContext } from '@apollo/server';
 import { startStandaloneServer } from '@apollo/server/standalone';
 import { GraphQLRequestContext } from 'apollo-server-types'
 import { GraphQLRequestListener } from 'apollo-server-plugin-base/src/index'
 import ApolloServerOperationRegistry from '@apollo/server-plugin-operation-registry';
 import { GraphQLError } from 'graphql';
+import cloudWatchPlugin, { log } from './clientEnforcementPlugin'
 
 
 // A schema is a collection of type definitions (hence "typeDefs")
@@ -45,132 +46,75 @@ const resolvers = {
     },
 };
 
-
-// const clientEnforcementPlugin: ApolloServerPlugin = {
-// async requestDidStart(requestContext) {
-//     console.log('Request started!');
-
-//     return {
-//     // async parsingDidStart(requestContext) {
-//     //     console.log('Parsing started!');
-//     // },
-
-//     // async validationDidStart(requestContext) {
-//     //     console.log('Validation started!');
-//     // },
-
-//     async didResolveOperation(requestContext, logger) {
-//         let clientName = requestContext.http.headers.get('apollographql-client-name');
-//         let clientVersion = requestContext.http.headers.get(
-//           'apollographql-client-version'
-//         );
-
-//         if (!clientName) {
-//           let logString = `Execution Denied: Operation has no identified client`;
-//           logger.debug(logString);
-
-//           return async (err) => {
-//             if (err) {
-//                 new GraphQLError(logString)
-//             }
-//           }
-//           //throw new GraphQLError(logString);
-//         }
-
-//         if (!clientVersion) {
-//           let logString = `Execution Denied: Client ${clientName} has no identified version`;
-//           logger.debug(logString);
-
-//           return async (err) => {
-//             if (err) {
-//                 new GraphQLError(logString)
-//             }
-//           }
-//         }
-
-//         // return {
-//           async parsingDidStart({queryHash, requestContext}) {
-           
-//           }
-//         };  
-// //     },
-// //     };
-// },
-// };
-///** @type {import("@apollo/server").PluginInterface} */
-const clientEnforcementPlugin: ApolloServerPlugin = {
-
-    async requestDidStart(requestContext) {
-        console.log('Request started!');
-
-        return {
-            async parsingDidStart(requestContext) {
-                console.log('Parsing started!');
-                if (!requestContext.operationName) {
-                   // logger.debug(`Unnamed Operation: ${queryHash}`);
-      
-                    let error = new GraphQLError('Execution denied: Unnamed operation');
-      
-                    Object.assign(error.extensions, {
-                      queryHash: requestContext.queryHash,
-                      clientName: requestContext.clientName,
-                      clientVersion: clientVersion,
-                      exception: {
-                        message: `All operations must be named`
-                      }
-                    });
-      
-                    throw error;
-                  }
-            },
-
-            async validationDidStart(requestContext) {
-                console.log('Validation started!');
-            },
-
-            async didResolveOperation(requestContext) {
-                //console.log(requestContext)
-                let clientName = requestContext.request.http.headers.get('apollographql-client-name');
-                let clientVersion = requestContext.request.http.headers.get(
-                    'apollographql-client-version'
-                );
-
-                if (!clientName) {
-                    let logString = `Execution Denied: Operation has no identified client`;
-                    requestContext.logger.debug(logString)
-                    // return async (err) => {
-                    //     if (err) {
-                    //         new GraphQLError(logString)
-                    //     }
-                    // }
-                    throw new GraphQLError(logString);
-                }
-
-                if (!clientVersion) {
-                    let logString = `Execution Denied: Client ${clientName} has no identified version`;
-
-
-                    // return async (err) => {
-                    //     if (err) {
-                    //         new GraphQLError(logString)
-                    //     }
-                    // }
-                    throw new GraphQLError(logString);
-                }
-
-            }
-        };
-    },
-
-
+// Create options type (see: https://github.com/apollographql/confidential-gateway-customizations/blob/83887bd1dd6a6bc890b514b53f1e48e96ca9e77e/alphasense/src/plugins/auth/createAuthPlugin.ts)
+type clientEnforcementPluginOptions = {
+    defaultClientName?: string | null;
+    defaultClientVersion?: number | null;
 };
+
+function clientEnforcementPlugin(options?: clientEnforcementPluginOptions): ApolloServerPlugin<BaseContext>  {
+    return {
+        async requestDidStart(_) {
+            return {
+                async didResolveOperation(requestContext) {
+                    let clientName = requestContext.request.http.headers.get('apollographql-client-name') || options?.defaultClientName;
+                    let clientVersion = requestContext.request.http.headers.get(
+                        'apollographql-client-version'
+                    ) || options?.defaultClientVersion;
+    
+                    if (!clientName) {
+                        let logString = `Execution Denied: Operation has no identified client`;
+                        requestContext.logger.debug(logString)
+                        throw new GraphQLError(logString);
+                    }
+    
+                    if (!clientVersion) {
+                        let logString = `Execution Denied: Client ${clientName} has no identified version`;
+                        requestContext.logger.debug(logString)
+                        throw new GraphQLError(logString);
+                    }
+    
+                    if (!requestContext.operationName) {
+                        let logString = `Unnamed Operation: ${requestContext.queryHash}`;
+                        requestContext.logger.debug(logString);
+    
+                        throw new GraphQLError(logString, {
+                            extensions: {
+                                queryHash: requestContext.queryHash,
+                                clientName: clientName,
+                                clientVersion: clientVersion,
+                                exception: {
+                                    message: `All operations must be named`
+                                }
+                            }
+                        });
+                    }
+                },
+
+                async didEncounterErrors(requestContext) {
+                    requestContext.errors.forEach(error => {
+                        requestContext.logger.error(error)
+                        console.log(error.toString())
+                    });
+                }
+            };
+        },
+    
+    }
+};
+
+// define options
+const pluginOpts: clientEnforcementPluginOptions = {
+    defaultClientName: "apollo-test",
+    defaultClientVersion: 1
+}
 
 // The ApolloServer constructor requires two parameters: your schema
 // definition and your set of resolvers.
 const server = new ApolloServer({
     typeDefs,
     resolvers,
-    plugins: [clientEnforcementPlugin]
+    plugins: [clientEnforcementPlugin()]
 });
 
 // Passing an ApolloServer instance to the `startStandaloneServer` function:

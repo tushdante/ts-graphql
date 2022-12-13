@@ -2,65 +2,80 @@
 const { GraphQLError } = require('graphql');
 // Plugin example for client ID enforcement
 /** @type {import("@apollo/server").PluginInterface} */
-const clientEnforcementPlugin =  {
-    // Return an obj with didResolveOperation
-    // Add a tsconfig file to the proj
-    requestDidStart: ({request, logger}) => {
-      let clientName = request.http.headers.get('apollographql-client-name');
-      let clientVersion = request.http.headers.get(
-        'apollographql-client-version'
-      );
-  
-      if (!clientName) {
-        let logString = `Execution Denied: Operation has no identified client`;
-        logger.debug(logString);
-  
-        throw new GraphQLError(logString);
-      }
-  
-      if (!clientVersion) {
-        let logString = `Execution Denied: Client ${clientName} has no identified version`;
-        logger.debug(logString);
-  
-        throw new GraphQLError(logString);
-      }
-  
-      return {
-        parsingDidStart({queryHash, request}) {
-          if (!request.operationName) {
-            logger.debug(`Unnamed Operation: ${queryHash}`);
-  
-            let error = new GraphQLError('Execution denied: Unnamed operation');
-  
-            Object.assign(error.extensions, {
-              queryHash: queryHash,
-              clientName: clientName,
-              clientVersion: clientVersion,
-              exception: {
-                message: `All operations must be named`
-              }
-            });
-  
-            throw error;
-          }
-        }
-      };
-    }
-};
+const Stopwatch = require('statman-stopwatch');
 
-export default {
-    async requestDidStart(requestContext) {
-        console.log('Request started!');
-    
-        return {
-          async parsingDidStart(requestContext) {
-            console.log('Parsing started!');
-          },
-    
-          async validationDidStart(requestContext) {
-            console.log('Validation started!');
-          },
-        };
-      },
-  };
-//export default clientEnforcementPlugin;
+interface LogInfo {
+    gatewayRequestId: string;
+    gqlLifecycleEvent: string;
+    stopwatchReadMs?: number;
+}
+
+export function log(logInfo: LogInfo) { console.log(JSON.stringify({ ...logInfo, serviceName: 'books' })) };
+
+export default function CloudWatchPlugin() {
+    return {
+        requestDidStart: (requestContext) => {
+            const sw = new Stopwatch(true);
+            const gatewayRequestId = requestContext.context.gatewayRequestId;
+
+            log({
+                gatewayRequestId,
+                stopwatchReadMs: 0,
+                gqlLifecycleEvent: 'requestDidStart'
+            });
+
+            return {
+                didResolveSource() {
+                    log({
+                        gatewayRequestId,
+                        stopwatchReadMs: sw.read(),
+                        gqlLifecycleEvent: 'didResolveSource'
+                    });
+                },
+                parsingDidStart() {
+                    log({
+                        gatewayRequestId,
+                        stopwatchReadMs: sw.read(),
+                        gqlLifecycleEvent: 'parsingDidStart'
+                    });
+                },
+                validationDidStart() {
+                    log({
+                        gatewayRequestId,
+                        stopwatchReadMs: sw.read(),
+                        gqlLifecycleEvent: 'validationDidStart'
+                    });
+                },
+                didResolveOperation() {
+                    log({
+                        gatewayRequestId,
+                        stopwatchReadMs: sw.read(),
+                        gqlLifecycleEvent: 'didResolveOperation'
+                    });
+                },
+                executionDidStart() {
+                    log({
+                        gatewayRequestId,
+                        stopwatchReadMs: sw.read(),
+                        gqlLifecycleEvent: 'executionDidStart'
+                    });
+                },
+                didEncounterErrors() {
+                    log({
+                        gatewayRequestId,
+                        stopwatchReadMs: sw.read(),
+                        gqlLifecycleEvent: 'didEncounterErrors'
+                    });
+                },
+                willSendResponse() {
+                    log({
+                        gatewayRequestId,
+                        stopwatchReadMs: sw.read(),
+                        gqlLifecycleEvent: 'willSendResponse'
+                    });
+                    sw.stop();
+                }
+            }
+        }
+    }
+}
