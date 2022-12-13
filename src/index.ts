@@ -1,11 +1,11 @@
-import { ApolloServer, ApolloServerPlugin, BaseContext } from '@apollo/server';
+import { ApolloServer } from '@apollo/server';
 import { startStandaloneServer } from '@apollo/server/standalone';
-import { GraphQLRequestContext } from 'apollo-server-types'
-import { GraphQLRequestListener } from 'apollo-server-plugin-base/src/index'
-import ApolloServerOperationRegistry from '@apollo/server-plugin-operation-registry';
-import { GraphQLError } from 'graphql';
-import cloudWatchPlugin, { log } from './clientEnforcementPlugin'
 
+// use mock
+import { makeExecutableSchema } from '@graphql-tools/schema';
+import { addMocksToSchema, MockList } from '@graphql-tools/mock';
+import casual from 'casual';
+import { buildSchema } from 'graphql';
 
 // A schema is a collection of type definitions (hence "typeDefs")
 // that together define the "shape" of queries that are executed against
@@ -27,84 +27,35 @@ const typeDefs = `#graphql
   }
 `;
 
-const books = [
-    {
-        title: 'The Awakening',
-        author: 'Kate Chopin',
-    },
-    {
-        title: 'City of Glass',
-        author: 'Paul Auster',
-    },
-];
-
 // Resolvers define how to fetch the types defined in your schema.
 // This resolver retrieves books from the "books" array above.
 const resolvers = {
     Query: {
-        books: () => books,
+        books: () => 'Resolved!',
     },
 };
 
-// Create options type (see: https://github.com/apollographql/confidential-gateway-customizations/blob/83887bd1dd6a6bc890b514b53f1e48e96ca9e77e/alphasense/src/plugins/auth/createAuthPlugin.ts)
-type clientEnforcementPluginOptions = {
-    defaultClientName?: string | null;
-    defaultClientVersion?: number | null;
-};
-
-function clientEnforcementPlugin(): ApolloServerPlugin<BaseContext> {
-    return {
-        async requestDidStart() {
-            return {
-                async didResolveOperation(requestContext) {
-                    let clientName = requestContext.request.http.headers.get('apollographql-client-name');
-                    let clientVersion = requestContext.request.http.headers.get(
-                        'apollographql-client-version'
-                    );
-
-                    if (!clientName) {
-                        let logString = `Execution Denied: Operation has no identified client`;
-                        requestContext.logger.debug(logString)
-                        throw new GraphQLError(logString);
-                    }
-
-                    if (!clientVersion) {
-                        let logString = `Execution Denied: Client ${clientName} has no identified version`;
-                        requestContext.logger.debug(logString)
-                        throw new GraphQLError(logString);
-                    }
-
-                    if (!requestContext.operationName) {
-                        let logString = `Unnamed Operation: ${requestContext.queryHash}. All operations must be named`;
-                        requestContext.logger.debug(logString);
-
-                        throw new GraphQLError(logString, {
-                            extensions: {
-                                queryHash: requestContext.queryHash,
-                                clientName,
-                                clientVersion
-                            }
-                        });
-                    }
-                }
-            };
-        },
-
+const mocks = {
+    Book: () => {
+        return { title: () => casual.title,
+        author: () => casual.name
+        }
+    },
+    Query: () => {
+        return { books: () => new MockList([0,15]) }
     }
 };
 
-// define options
-const pluginOpts: clientEnforcementPluginOptions = {
-    defaultClientName: "apollo-test",
-    defaultClientVersion: 1
-}
+const schema = makeExecutableSchema({typeDefs: typeDefs});
+//const store = createMockStore({ schema });
 
 // The ApolloServer constructor requires two parameters: your schema
 // definition and your set of resolvers.
 const server = new ApolloServer({
-    typeDefs,
-    resolvers,
-    plugins: [clientEnforcementPlugin()]
+    schema: addMocksToSchema({
+        schema: schema,
+        mocks: mocks
+    }),
 });
 
 // Passing an ApolloServer instance to the `startStandaloneServer` function:
