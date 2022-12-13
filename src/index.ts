@@ -52,54 +52,44 @@ type clientEnforcementPluginOptions = {
     defaultClientVersion?: number | null;
 };
 
-function clientEnforcementPlugin(options?: clientEnforcementPluginOptions): ApolloServerPlugin<BaseContext>  {
+function clientEnforcementPlugin(): ApolloServerPlugin<BaseContext> {
     return {
-        async requestDidStart(_) {
+        async requestDidStart() {
             return {
                 async didResolveOperation(requestContext) {
-                    let clientName = requestContext.request.http.headers.get('apollographql-client-name') || options?.defaultClientName;
+                    let clientName = requestContext.request.http.headers.get('apollographql-client-name');
                     let clientVersion = requestContext.request.http.headers.get(
                         'apollographql-client-version'
-                    ) || options?.defaultClientVersion;
-    
+                    );
+
                     if (!clientName) {
                         let logString = `Execution Denied: Operation has no identified client`;
                         requestContext.logger.debug(logString)
                         throw new GraphQLError(logString);
                     }
-    
+
                     if (!clientVersion) {
                         let logString = `Execution Denied: Client ${clientName} has no identified version`;
                         requestContext.logger.debug(logString)
                         throw new GraphQLError(logString);
                     }
-    
+
                     if (!requestContext.operationName) {
-                        let logString = `Unnamed Operation: ${requestContext.queryHash}`;
+                        let logString = `Unnamed Operation: ${requestContext.queryHash}. All operations must be named`;
                         requestContext.logger.debug(logString);
-    
+
                         throw new GraphQLError(logString, {
                             extensions: {
                                 queryHash: requestContext.queryHash,
-                                clientName: clientName,
-                                clientVersion: clientVersion,
-                                exception: {
-                                    message: `All operations must be named`
-                                }
+                                clientName,
+                                clientVersion
                             }
                         });
                     }
-                },
-
-                async didEncounterErrors(requestContext) {
-                    requestContext.errors.forEach(error => {
-                        requestContext.logger.error(error)
-                        console.log(error.toString())
-                    });
                 }
             };
         },
-    
+
     }
 };
 
